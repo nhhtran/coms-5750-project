@@ -157,7 +157,7 @@ def astar(grid, obstacleIds, startPos, endPos):
         neighbors = []
         for i in range(max(0, current.element[1] - 1), min(yMax - 1, current.element[1] + 1) + 1):
             for j in range(max(0, current.element[0] - 1), min(xMax - 1, current.element[0] + 1) + 1):
-                if (not (grid[i][j] in obstacleIds or grid[i][j] in closed)):
+                if (not (grid[i][j] in obstacleIds or (j, i) in closed)):
                     neighbors.append((j, i))
 
         for n in neighbors:
