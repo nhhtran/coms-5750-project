@@ -32,8 +32,8 @@ class CvFpsCalc(object):
         return fps_rounded
 
 # Setting up canvas size to draw on
-canvas_width = 1000
-canvas_height = 1000
+canvas_width = 2000
+canvas_height = 2000
 canvas_size = (max(1280, canvas_width), max(720, canvas_height)) 
 
 # Initializing Mediapipe Hands Module
@@ -46,7 +46,7 @@ hands = mp_hands.Hands(
     min_detection_confidence=min_detection_confidence,
     min_tracking_confidence=min_tracking_confidence,
     static_image_mode=False,  # Optimization
-    model_complexity=0  # Optimization
+    model_complexity=1 
 )
 
 # Initialize Gesture Classifier
