@@ -8,6 +8,7 @@ import numpy as np
 from model import KeyPointClassifier
 import csv
 import itertools
+from astar import astar
 
 class CvFpsCalc(object):
     """
@@ -29,6 +30,11 @@ class CvFpsCalc(object):
         fps_rounded = round(fps, 2)
 
         return fps_rounded
+
+# Setting up canvas size to draw on
+canvas_width = 1000
+canvas_height = 1000
+canvas_size = (max(1280, canvas_width), max(720, canvas_height)) 
 
 # Initializing Mediapipe Hands Module
 mp_hands = mp.solutions.hands
@@ -167,7 +173,6 @@ camera_height = int(original_height * scale_factor)
 viewport_size = (camera_width, camera_height)
 
 # Create a larger canvas for panning
-canvas_size = (camera_width * 2, camera_height * 2)  # Can be arbitrary size, set to 2x camera frame size.
 offset_x, offset_y = (canvas_size[0] - viewport_size[0]) // 2, (canvas_size[1] - viewport_size[1]) // 2  # Start in center of the canvas
 
 canvas = np.ones((canvas_size[1], canvas_size[0], 3), dtype=np.uint8) * 255
@@ -434,7 +439,7 @@ pen_gesture_start_time = None
 pen_drawing_active = False
 
 # Variables for mode changing activation
-mode_change_delay = 2.0
+mode_change_delay = 1.0
 thumb_gesture_start_time = None
 
 # Variables for delay in setting start and end points
@@ -455,6 +460,10 @@ last_stroke_end_position = None
 # To store starting and ending coordiantes for maze
 maze_start = None
 maze_end = None
+
+# To ensure that once the maze is solved, it doesn't get solved again
+maze_solved = False
+maze_path = None
 
 while cap.isOpened():
     stat, frame = cap.read()
@@ -617,68 +626,68 @@ while cap.isOpened():
                 Gesture : Yo
                 Function : Eraser
                 """
-                
-                index_tip_x, index_tip_y = landmark_list[8][0], landmark_list[8][1]
-                cursor_x, cursor_y = index_tip_x, index_tip_y
-                little_tip_x, little_tip_y = landmark_list[20][0], landmark_list[20][1]
-                
-                # Eraser diameter is half the distance between index and little finger tips
-                dist = math.sqrt((index_tip_x - little_tip_x)**2 + (index_tip_y - little_tip_y)**2)
-                eraser_radius = int(dist / 4)
-                
-                # Setting upper and lower limits for radius
-                eraser_radius = max(1, min(eraser_radius, 50))
-                
-                eraser_x = index_tip_x + offset_x
-                eraser_y = index_tip_y + offset_y
-                
-                cv2.circle(canvas_display, (eraser_x, eraser_y), eraser_radius, (200, 200, 200), 2)
-                cv2.circle(canvas_display, (eraser_x, eraser_y), 2, (100, 100, 100), -1)
-                
-                cv2.line(canvas_display, 
-                        (eraser_x - eraser_radius + 5, eraser_y), 
-                        (eraser_x + eraser_radius - 5, eraser_y), 
-                        (150, 150, 150), 1)
-                cv2.line(canvas_display, 
-                        (eraser_x, eraser_y - eraser_radius + 5), 
-                        (eraser_x, eraser_y + eraser_radius - 5), 
-                        (150, 150, 150), 1)
-                
-                if len(pen_x) > 0:
-                    new_pen_x = []
-                    new_pen_y = []
+                if mode == 0:
+                    index_tip_x, index_tip_y = landmark_list[8][0], landmark_list[8][1]
+                    cursor_x, cursor_y = index_tip_x, index_tip_y
+                    little_tip_x, little_tip_y = landmark_list[20][0], landmark_list[20][1]
                     
-                    i = 0
-                    while i < len(pen_x):
-                        if pen_x[i] == -1:
-                            new_pen_x.append(pen_x[i])
-                            new_pen_y.append(pen_y[i])
-                            i += 1
-                            continue
+                    # Eraser diameter is half the distance between index and little finger tips
+                    dist = math.sqrt((index_tip_x - little_tip_x)**2 + (index_tip_y - little_tip_y)**2)
+                    eraser_radius = int(dist / 4)
+                    
+                    # Setting upper and lower limits for radius
+                    eraser_radius = max(1, min(eraser_radius, 50))
+                    
+                    eraser_x = index_tip_x + offset_x
+                    eraser_y = index_tip_y + offset_y
+                    
+                    cv2.circle(canvas_display, (eraser_x, eraser_y), eraser_radius, (200, 200, 200), 2)
+                    cv2.circle(canvas_display, (eraser_x, eraser_y), 2, (100, 100, 100), -1)
+                    
+                    cv2.line(canvas_display, 
+                            (eraser_x - eraser_radius + 5, eraser_y), 
+                            (eraser_x + eraser_radius - 5, eraser_y), 
+                            (150, 150, 150), 1)
+                    cv2.line(canvas_display, 
+                            (eraser_x, eraser_y - eraser_radius + 5), 
+                            (eraser_x, eraser_y + eraser_radius - 5), 
+                            (150, 150, 150), 1)
+                    
+                    if len(pen_x) > 0:
+                        new_pen_x = []
+                        new_pen_y = []
+                        
+                        i = 0
+                        while i < len(pen_x):
+                            if pen_x[i] == -1:
+                                new_pen_x.append(pen_x[i])
+                                new_pen_y.append(pen_y[i])
+                                i += 1
+                                continue
+                                
+                            # Check if point is within eraser radius
+                            dist_to_point = math.sqrt((pen_x[i] - eraser_x)**2 + (pen_y[i] - eraser_y)**2)
                             
-                        # Check if point is within eraser radius
-                        dist_to_point = math.sqrt((pen_x[i] - eraser_x)**2 + (pen_y[i] - eraser_y)**2)
-                        
-                        if dist_to_point > eraser_radius:
-                            # Point is outside eraser, keep it
-                            new_pen_x.append(pen_x[i])
-                            new_pen_y.append(pen_y[i])
-                        else:
-                            # Point is inside eraser - check if we need to split the stroke
-                            # If we're erasing a point in the middle of a stroke, we need to add a separator
-                            if (i > 0 and pen_x[i-1] != -1 and 
-                                i < len(pen_x)-1 and pen_x[i+1] != -1):
-                                new_pen_x.append(-1)
-                                new_pen_y.append(-1)
-                        
-                        i += 1
+                            if dist_to_point > eraser_radius:
+                                # Point is outside eraser, keep it
+                                new_pen_x.append(pen_x[i])
+                                new_pen_y.append(pen_y[i])
+                            else:
+                                # Point is inside eraser - check if we need to split the stroke
+                                # If we're erasing a point in the middle of a stroke, we need to add a separator
+                                if (i > 0 and pen_x[i-1] != -1 and 
+                                    i < len(pen_x)-1 and pen_x[i+1] != -1):
+                                    new_pen_x.append(-1)
+                                    new_pen_y.append(-1)
+                            
+                            i += 1
 
-                    pen_x = new_pen_x
-                    pen_y = new_pen_y
-                    
-                pen_gesture_start_time = None
-                thumb_gesture_start_time = None
-                pen_drawing_active = False
+                        pen_x = new_pen_x
+                        pen_y = new_pen_y
+                        
+                    pen_gesture_start_time = None
+                    thumb_gesture_start_time = None
+                    pen_drawing_active = False
                
             elif gesture_id == 3:
                 """
@@ -963,6 +972,9 @@ while cap.isOpened():
                 pen_smooth_buffer_y.clear()
 
     else:
+        """
+            No hand detected by mediapipe
+        """
         if mode == 0:
             if stroke_started:
                 # Store the last position and time before ending the stroke
@@ -999,6 +1011,8 @@ while cap.isOpened():
                 continue
             cv2.line(canvas_display, (pen_x[i], pen_y[i]), (pen_x[i+1], pen_y[i+1]), selected_color, 3)
     
+    maze_canvas = canvas_display.copy()
+    
     if maze_start:
         cv2.circle(canvas_display, maze_start, 5, green, -1)
         cv2.circle(canvas_display, maze_start, 2, black, -1)
@@ -1014,15 +1028,35 @@ while cap.isOpened():
         if 0 <= cursor_canvas_x < canvas_size[0] and 0 <= cursor_canvas_y < canvas_size[1]:
             cv2.circle(canvas_display, (cursor_canvas_x, cursor_canvas_y), 5, red, -1)
     
-    # if mode == 1:
-        # TODO: Find the path from start to end and draw it
+    if mode == 1:
+        # Find the path from start to end and draw it
         
         # Entity                ||  Variable Name
         # --------------------- ||  ----------------
         # Drawing Canvas        ||  canvas_display
         # Starting Coordinate   ||  maze_start
         # Ending Coordinate     ||  maze_end
+        
+        if not maze_solved:
+            maze_gray = cv2.cvtColor(maze_canvas, cv2.COLOR_BGR2GRAY)
+            _, binary_canvas = cv2.threshold(maze_gray, 10, 255, cv2.THRESH_BINARY)
+            binary_maze = (binary_canvas == 0).astype(np.uint8)
+            
+            obstacles = set()
+            obstacles.add(1)
+            startPos = maze_start
+            endPos = maze_end
+            (maze_path, closed) = astar(binary_maze, obstacles, startPos, endPos)
+            
+            maze_solved = True
+        else:
+            if maze_path is not None:
+                for i in range(len(maze_path) - 1):
+                    cv2.line(canvas_display, maze_path[i], maze_path[i + 1], (255, 0, 0), 3)
     
+    else:
+        maze_solved = False
+        maze_path = None
     
     # Extract viewport from canvas
     try:
@@ -1055,8 +1089,9 @@ while cap.isOpened():
     cv2.putText(combined_display, title, ((width - tw) // 2, 60), cv2.FONT_HERSHEY_SIMPLEX, font_scale, red, thickness)
     
     if msg is not None:
-        cv2.putText(combined_display, msg, (20, 700), cv2.FONT_HERSHEY_SIMPLEX, 0.8, black, 2)
-        PasteImg(combined_display, tools[gesture_id][1], (20, 565))
+        if mode == 0 or (mode != 0 and (gesture_id==0 or gesture_id == 4 or gesture_id == 5)):    
+            cv2.putText(combined_display, msg, (20, 700), cv2.FONT_HERSHEY_SIMPLEX, 0.8, black, 2)
+            PasteImg(combined_display, tools[gesture_id][1], (20, 565))
 
     mode_text = f"Mode {mode}"
     mode_font_scale, mode_thickness = 0.8, 2
