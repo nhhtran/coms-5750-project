@@ -1,19 +1,18 @@
 import numpy as np
-import cv2
-from astar import astar
 import timeit
 
-def draw_path(grid, path, color):
+def draw_path(grid, path, color, t1, t2):
     ipath = []
 
     for p in path:
         ipath.append((int(p[0]), int(p[1])))
 
     for i in range(1, len(ipath)):
-        cv2.line(grid, ipath[i - 1], ipath[i], color, 1)
+        t = np.random.randint(t1, t2)   
+        cv2.line(grid, ipath[i - 1], ipath[i], color, t)
 
 
-def random_walk_path(grid, max_waypoints, empty, start, end):
+def random_walk_path(grid, max_waypoints, empty, start, end, t1, t2):
     waypoints = []
     waypoints.append(start)
     domain = int(len(grid) / max_waypoints)
@@ -23,86 +22,89 @@ def random_walk_path(grid, max_waypoints, empty, start, end):
         indomain += 1
     waypoints.append(end)
 
-    draw_path(grid, waypoints, empty)
+    draw_path(grid, waypoints, empty, t1, t2)
 
 
 def gen_square_problem_grid(grid_size, start, end):
     empty = 1
     obstacle = 0
 
-    prob_empty = 0.3
-
-    ngrid = np.random.rand(grid_size, grid_size) < prob_empty
+    ngrid = np.zeros((grid_size, grid_size)) 
     ngrid = ngrid.astype(np.uint8)
 
     max_waypoints = grid_size // 10
 
-    random_walk_path(ngrid, max_waypoints, empty, start, end)
+    t1 = grid_size // 40
+    t2 = grid_size // 15
+    
+    random_walk_path(ngrid, max_waypoints, empty, start, end, t1, t2)
 
     return ngrid
 
 
-if __name__ == "__main__":
+if __name__ == "__main__": 
+    import cv2
+    import time
+    from quadtree_orcld import build_graph, build_tree
+    from quadtree_astar import astar as qastar
+    from astar import astar
+    import math
+
     np.random.seed(42)
     
-    
     # Test cases
+    '''
     r = 10
     for i in range(100, 5000, 100):
-        n = 0
+        aspeed = 0
         print(i, end=" ")
         for j in range(r):
             grid_size = i
 
             start = (0,0)
             end = (grid_size - 1, grid_size - 1)
-            obstacles = {0}
-            
-            #ngrid = cv2.imread("blocky_path1.png", cv2.IMREAD_GRAYSCALE) / 255
-
             ngrid = gen_square_problem_grid(grid_size, start, end)
+
+            #depth = math.ceil(math.log2(max(ngrid.shape[0] - 1, ngrid.shape[1] - 1)))
+            #quadtree = build_tree(ngrid, start, end, depth, ngrid.shape[0] - 1, ngrid.shape[1] - 1)
+            #graph = build_graph(quadtree)
             
-            #path_np, closed_np = astar_quadtree_np(ngrid, obstacles, start, end)
-            #print("QuadTree A* path (NumPy):", path_np)
-            #t = timeit.Timer("astar(ngrid, obstacles, start, end)", globals=globals())
-            path, closed = astar(ngrid, obstacles, start, end)
-            n += len(closed)
-            print(len(closed), end=" ")
+            
+            t = timeit.timeit("astar(ngrid, {0}, start, end)", globals=globals(), number=1) 
+            
+            #print(len(closed), end=" ")
+            aspeed += t
 
-        print()
+        print(aspeed / r)
     
-
     '''
+    ngrid = gen_square_problem_grid(500, (0, 0), (499, 499))
+    #_, bgrid = cv2.threshold(ngrid, 10, 255, cv2.THRESH_BINARY)
     
-    grid_size = 200
+    #start = (ngrid.shape[0] - 1,0)
+    #end = (0, ngrid.shape[1] - 1)
 
-    start = (0,0)
-    end = (grid_size - 1, grid_size - 1)
-    obstacles = {0}
+    #depth = math.ceil(math.log2(max(ngrid.shape[0] - 1, ngrid.shape[1] - 1)))
+    #quadtree = build_tree(ngrid, start, end, depth, ngrid.shape[0] - 1, ngrid.shape[1] - 1)
+    #graph = build_graph(quadtree)        
+    #(path_np, closed) = qastar(graph, start, end)
     
-    #ngrid = cv2.imread("blocky_path1.png", cv2.IMREAD_GRAYSCALE) / 255
-
-    ngrid = gen_square_problem_grid(grid_size, start, end)
+    #(path_np, closed) = astar(bgrid, {0}, start, end)
     
-    #path_np, closed_np = astar_quadtree_np(ngrid, obstacles, start, end)
-    #print("QuadTree A* path (NumPy):", path_np)
-    path_np, closed_np = astar(ngrid, obstacles, start, end)
-
+    #print(len(path_np))
 
     ngrid = np.array(ngrid) * 255
     ngrid = ngrid.astype(np.uint8)
     
     ngrid = cv2.cvtColor(ngrid,cv2.COLOR_GRAY2RGB)
-    draw_path(ngrid, path_np, (0, 0, 255))
+    #draw_path(ngrid, path_np, (0, 0, 255), 1, 2)
 
+    cv2.imshow('astar found path', ngrid)
     # Optional: Scale up the image for better visibility (e.g., each "pixel" becomes 20x20)
-    scale = 4
+    scale = 2
     ngrid = cv2.resize(ngrid, (ngrid.shape[1]*scale, ngrid.shape[0]*scale), interpolation=cv2.INTER_NEAREST)
     
-    print(len(closed_np))
-    
     # Display the image
-    cv2.imshow('astar found path', ngrid)
+    cv2.imwrite("example_test.png", ngrid)
     cv2.waitKey(0)
     cv2.destroyAllWindows()
-    '''    

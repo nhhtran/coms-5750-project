@@ -140,8 +140,6 @@ def astar(graph, startPos, endPos):
     
     startQuadNum = find_quadrant(V, startPos)
     endQuadNum   = find_quadrant(V, endPos)
-    print(bin(startQuadNum))
-    print(bin(endQuadNum))
     
     node = Node(V[startQuadNum], None, 0, 0)
     nodes[startQuadNum] = node
@@ -208,6 +206,8 @@ def draw_path(grid, path):
     cv2.circle(grid, (int(cur_p[0]), int(cur_p[1])), 5, (255, 0, 0), -1)
 
 
+
+
 if __name__ == "__main__":
     print("Running quadtree_astar.py")
     
@@ -215,13 +215,13 @@ if __name__ == "__main__":
     import timeit
     from quadtree_orcld import build_graph, build_tree
 
-    ggrid = cv2.imread("blocky_path2.png", cv2.IMREAD_GRAYSCALE)
+    ggrid = cv2.imread("blocky_path1.png", cv2.IMREAD_GRAYSCALE)
     _, bgrid = cv2.threshold(ggrid, 10, 255, cv2.THRESH_BINARY)
     
-    start, end = (255, 0), (0, 255)
+    start, end = (bgrid.shape[0] - 1, 0), (0, bgrid.shape[1] - 1)
 
-    depth = 3 #math.ceil(math.log2(max(bgrid.shape[0] - 1, bgrid.shape[1] - 1)))
-    quadtree = build_tree(bgrid, start, end, depth, 0, 0, bgrid.shape[0] - 1, bgrid.shape[1] - 1)
+    depth = math.ceil(math.log2(max(bgrid.shape[0] - 1, bgrid.shape[1] - 1)))
+    quadtree = build_tree(bgrid, start, end, depth, bgrid.shape[0] - 1, bgrid.shape[1] - 1)
     if (not quadtree.is_enclosed):
         graph = build_graph(quadtree)
         path, closed = astar(graph, start, end)
@@ -233,7 +233,7 @@ if __name__ == "__main__":
             scale = 2
             cgrid = cv2.resize(cgrid, (cgrid.shape[1]*scale, cgrid.shape[0]*scale), interpolation=cv2.INTER_NEAREST)
             cv2.imshow('quadtree', cgrid)
-            cv2.imwrite("quadtree_environment_path.png", cgrid)
+            cv2.imwrite("quadtree_environment_non2power_path.png", cgrid)
             cv2.waitKey(0)
             cv2.destroyAllWindows()
     else:
