@@ -131,6 +131,10 @@ def find_quadrant(V, pos):
     return quad_num
 
 
+def floatcoord2int(coord):
+    return (int(coord[0]), int(coord[1]))
+
+
 def astar(graph, startPos, endPos):
     V, E, W = graph[0], graph[1], graph[2]
 
@@ -159,12 +163,12 @@ def astar(graph, startPos, endPos):
         if (currentNum == endQuadNum):
             path = []
             path.append(endPos)
-            path.append(current.element.get())
+            path.append(floatcoord2int(current.element.get()))
             trace = current.parent
             while (not(trace is None)):
-                path.append(trace.element.get())
+                path.append(floatcoord2int(trace.element.get()))
                 trace = trace.parent
-            path.append(startPos)
+            path.append(floatcoord2int(startPos))
             path.reverse()
             return (path, closed)
 
