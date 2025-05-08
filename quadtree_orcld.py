@@ -50,18 +50,30 @@ def make_box(minx, miny, maxx, maxy):
 def is_point_in_bbox(point, bbox):
     return point[0] >= bbox[0] and point[0] <= bbox[2] and point[1] >= bbox[1] and point[1] <= bbox[3]
 
+def get_region_center(quadtree, region_num):
+    region = quadtree.region_data[region_num]
+    center_x = (region.bbox[0] + region.bbox[2]) / 2
+    center_y = (region.bbox[1] + region.bbox[3]) / 2
+    return (int(center_x), int(center_y))
+
+def find_containing_region(quadtree, point):
+    for region_num, region_data in quadtree.region_data.items():
+        if region_data.free and is_point_in_bbox(point, region_data.bbox):
+            return get_region_center(quadtree, region_num)
+    return None
+
 
 def dilated_integer_addition(nq, ni, tx, ty):
-    return (((nq | ty ) + (ni & tx )) & tx ) | (((nq | tx ) + (ni & ty )) & ty )
+    return (((int(nq) | int(ty) ) + (int(ni) & int(tx) )) & int(tx) ) | (((int(nq) | int(tx) ) + (int(ni) & int(ty) )) & int(ty) )
 
 
 def interleave(x, y, size):
     encoded = np.uint64(0)
     mask = np.uint64(2**(size-1))
     for i in range(size):
-        encoded = (encoded << 1) + ((y & mask) != 0)
-        encoded = (encoded << 1) + ((x & mask) != 0)
-        x, y = x << 1, y << 1
+        encoded = (int(encoded) << 1) + ((int(y) & int(mask)) != 0)
+        encoded = (int(encoded) << 1) + ((int(x) & int(mask)) != 0)
+        x, y = int(x) << 1, int(y) << 1
     return encoded
 
 
@@ -83,34 +95,44 @@ def compute_8directions(r):
 def is_bound_closed(grid, bbox, maxx, maxy):
     # if bounds are all obstacle, return true.
     xmin, ymin, xmax, ymax = bbox[0], bbox[1], min(bbox[2], maxx), min(bbox[3], maxy)
-
+    
+    xmax = min(xmax, grid.shape[1] - 1)
+    ymax = min(ymax, grid.shape[0] - 1)
+    
     for x in range(xmin, xmax + 1):
-        if (grid[ymin][x] != OBSTACLE_ID):
-            return False
-
-    for x in range(xmin, xmax + 1):
-        if (grid[ymax][x] != OBSTACLE_ID):
-            return False
-
+        if x < grid.shape[1]:
+            if ymin < grid.shape[0] and grid[ymin][x] != OBSTACLE_ID:
+                return False
+            if ymax < grid.shape[0] and grid[ymax][x] != OBSTACLE_ID:
+                return False
+    
     for y in range(ymin + 1, ymax):
-        if (grid[y][xmin] != OBSTACLE_ID):
-            return False
-
-    for y in range(ymin + 1, ymax):
-        if (grid[y][xmax] != OBSTACLE_ID):
-            return False
-
+        if y < grid.shape[0]:
+            if xmin < grid.shape[1] and grid[y][xmin] != OBSTACLE_ID:
+                return False
+            if xmax < grid.shape[1] and grid[y][xmax] != OBSTACLE_ID:
+                return False
+    
     return True
-
 
 def is_region_free(grid, bbox, maxx, maxy):
     # if region is free of obstacles, return true
-    xmin, ymin, xmax, ymax = bbox[0], bbox[1], min(bbox[2], maxx), min(bbox[3], maxy)
+    grid_height, grid_width = grid.shape[0], grid.shape[1]
+    
+    xmin, ymin = bbox[0], bbox[1]
+    xmax = min(bbox[2], maxx, grid_width - 1)  
+    ymax = min(bbox[3], maxy, grid_height - 1) 
+    
     for y in range(ymin, ymax + 1):
+        if y >= grid_height:  
+            continue
         for x in range(xmin, xmax + 1):
-            if (grid[y][x] == OBSTACLE_ID):
-                return (x, y)
-    return (-1, -1)
+            if x >= grid_width: 
+                continue
+            if grid[y][x] == OBSTACLE_ID:
+                return (x, y)  
+    
+    return (-1, -1) 
 
 
 def is_length_minimum(bbox):
@@ -129,10 +151,14 @@ def find_neighbor(quadtree, quadrant_num, direction):
         nq = np.uint64(quadrant_num)
         l = quadtree.region_data[quadrant_num].level
         if (level_diff < 0):
-            s = np.uint64((r - l + abs(level_diff)) << 1)
-            return dilated_integer_addition((nq >> s) << s, nd << s, tx, ty)
+            s = np.uint64(int(r - l + abs(level_diff)) << 1)
+            nq = int(nq)
+            s = int(s)
+            nd = int(nd)
+
+            return dilated_integer_addition(((nq >> s) << s), (nd << s), tx, ty)
         else:
-            return dilated_integer_addition(nq, nd << ((r - l) << 1), tx, ty)            
+            return dilated_integer_addition(nq, int(nd) << (int(r - l) << 1), tx, ty)            
 
     return None
 
@@ -163,8 +189,8 @@ def build_tree(grid, start, end, max_depth, maxx, maxy):
     tx = np.uint64(1)
     ty = np.uint64(2)
     for _ in range(depth - 1):
-        tx = (tx << 2) + 1
-        ty = (ty << 2) + 2
+        tx = (int(tx) << 2) + 1
+        ty = (int(ty) << 2) + 2
 
     quadtree = QuadTree(compute_8directions(depth))
     quadtree.r = depth
@@ -240,7 +266,7 @@ def build_tree(grid, start, end, max_depth, maxx, maxy):
             #    if (s.parent_lcld[d] is not None):
             #        s.child_lcld[d] = s.parent_lcld[d]
 
-            quadtree.region_data[s.num << ((depth - s.level) << 1)] = RegionData(s.level, s.bbox, not is_obs, s.child_lcld, s.child_pos, s.num << ((depth - s.level) << 1))
+            quadtree.region_data[int(s.num) << (int(depth - s.level) << 1)] = RegionData(s.level, s.bbox, not is_obs, s.child_lcld, s.child_pos, int(s.num) << (int(depth - s.level) << 1))
             #print(bin(s.num))
 
             del quadtree.subdivision_data[(s.num, s.level)]
@@ -260,23 +286,23 @@ def build_tree(grid, start, end, max_depth, maxx, maxy):
         #(self, bbox, cached_points, parent_lcld, child_pos, num)
 
         if (s.bbox[0] <= maxx and cent[1] <= maxy)  :
-            cnum = ((s.num << 2) + 0, s.level + 1)
-            quadtree.subdivision_data[cnum] = SubdivisionData(s.level + 1, make_box(s.bbox[0], cent[1], cent[0], s.bbox[3]), bl, s.child_lcld, (2, 1), (s.num << 2) + 0)
+            cnum = ((int(s.num) << 2) + 0, s.level + 1)
+            quadtree.subdivision_data[cnum] = SubdivisionData(s.level + 1, make_box(s.bbox[0], cent[1], cent[0], s.bbox[3]), bl, s.child_lcld, (2, 1), (int(s.num) << 2) + 0)
             queue.append(quadtree.subdivision_data[cnum])   
 
         if (cent[0] <= maxx and cent[1] <= maxy)    : 
-            cnum = ((s.num << 2) + 1, s.level + 1)
-            quadtree.subdivision_data[cnum] = SubdivisionData(s.level + 1, make_box(cent[0], cent[1], s.bbox[2], s.bbox[3]), br, s.child_lcld, (2, 3), (s.num << 2) + 1)
+            cnum = ((int(s.num) << 2) + 1, s.level + 1)
+            quadtree.subdivision_data[cnum] = SubdivisionData(s.level + 1, make_box(cent[0], cent[1], s.bbox[2], s.bbox[3]), br, s.child_lcld, (2, 3), (int(s.num) << 2) + 1)
             queue.append(quadtree.subdivision_data[cnum])
 
         if (s.bbox[0] <= maxx and s.bbox[1] <= maxy): 
-            cnum = ((s.num << 2) + 2, s.level + 1)
-            quadtree.subdivision_data[cnum] = SubdivisionData(s.level + 1, make_box(s.bbox[0], s.bbox[1], cent[0], cent[1]), tl, s.child_lcld, (0, 1), (s.num << 2) + 2)
+            cnum = ((int(s.num) << 2) + 2, s.level + 1)
+            quadtree.subdivision_data[cnum] = SubdivisionData(s.level + 1, make_box(s.bbox[0], s.bbox[1], cent[0], cent[1]), tl, s.child_lcld, (0, 1), (int(s.num) << 2) + 2)
             queue.append(quadtree.subdivision_data[cnum])
 
         if (cent[0] <= maxx and s.bbox[1] <= maxy)  : 
-            cnum = ((s.num << 2) + 3, s.level + 1)
-            quadtree.subdivision_data[cnum] = SubdivisionData(s.level + 1, make_box(cent[0], s.bbox[1], s.bbox[2], cent[1]), tr, s.child_lcld, (0, 3), (s.num << 2) + 3)
+            cnum = ((int(s.num) << 2) + 3, s.level + 1)
+            quadtree.subdivision_data[cnum] = SubdivisionData(s.level + 1, make_box(cent[0], s.bbox[1], s.bbox[2], cent[1]), tr, s.child_lcld, (0, 3), (int(s.num) << 2) + 3)
             queue.append(quadtree.subdivision_data[cnum])
     
 

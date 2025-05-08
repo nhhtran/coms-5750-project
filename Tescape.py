@@ -9,6 +9,9 @@ from model import KeyPointClassifier
 import csv
 import itertools
 from astar import astar
+from quadtree_orcld import build_graph, build_tree, find_containing_region
+from quadtree_astar import astar as qastar
+import threading
 
 class CvFpsCalc(object):
     """
@@ -106,6 +109,9 @@ thumbup = cv2.imread('toolimg/thumbup.png')
 thumbdown = cv2.imread('toolimg/thumbdown.png')
 altok = cv2.imread('toolimg/endpoint.jpg')
 eraser = cv2.imread('toolimg/eraser.jpg')
+
+clip_ok = cv2.imread('toolimg/okay.png')
+clip_pinch = cv2.imread('toolimg/pinch.png')
 
 def smooth_points(points_x, points_y, filter_strength=0.7):
     """
@@ -419,6 +425,75 @@ def draw_landmarks(image, landmark_point):
 
     return image
 
+def crop_canvas_to_content(canvas, maze_start, maze_end):
+    """
+    Crops the canvas to only include the area with drawn content.
+    """
+
+    gray = cv2.cvtColor(canvas, cv2.COLOR_BGR2GRAY)
+    _, binary = cv2.threshold(gray, 250, 255, cv2.THRESH_BINARY_INV)
+    
+    non_zero_pixels = cv2.findNonZero(binary)
+    
+    if non_zero_pixels is None or len(non_zero_pixels) == 0:
+        return canvas, (0, 0)
+    
+    x, y, w, h = cv2.boundingRect(non_zero_pixels)
+    
+    margin = 10
+    x = max(0, x - margin)
+    y = max(0, y - margin)
+    w = min(canvas.shape[1], w + 2 * margin)
+    h = min(canvas.shape[0], h + 2 * margin)
+
+    x_min, x_max = x, x + w
+    y_min, y_max = y, y + h
+    
+    if maze_start[0] < x_min:
+        expand_left = x_min - maze_start[0] + margin
+        x_min = max(0, maze_start[0] - margin)
+        w += expand_left
+    elif maze_start[0] >= x_max:
+        expand_right = maze_start[0] - x_max + 1 + margin
+        w += expand_right
+        w = min(canvas.shape[1] - x_min, w)
+    
+    if maze_start[1] < y_min:
+        expand_top = y_min - maze_start[1] + margin
+        y_min = max(0, maze_start[1] - margin)
+        h += expand_top
+    elif maze_start[1] >= y_max:
+        expand_bottom = maze_start[1] - y_max + 1 + margin
+        h += expand_bottom
+        h = min(canvas.shape[0] - y_min, h)
+    
+    if maze_end[0] < x_min:
+        expand_left = x_min - maze_end[0] + margin
+        x_min = max(0, maze_end[0] - margin)
+        w += expand_left
+    elif maze_end[0] >= x_min + w:
+        expand_right = maze_end[0] - (x_min + w) + 1 + margin
+        w += expand_right
+        w = min(canvas.shape[1] - x_min, w)
+    
+    if maze_end[1] < y_min:
+        expand_top = y_min - maze_end[1] + margin
+        y_min = max(0, maze_end[1] - margin)
+        h += expand_top
+    elif maze_end[1] >= y_min + h:
+        expand_bottom = maze_end[1] - (y_min + h) + 1 + margin
+        h += expand_bottom
+        h = min(canvas.shape[0] - y_min, h)
+    
+    x = int(x_min)
+    y = int(y_min)
+    w = min(int(w), canvas.shape[1] - x)
+    h = min(int(h), canvas.shape[0] - y)
+    
+    cropped = canvas[y:y+h, x:x+w]
+    
+    return cropped, (x, y)
+
 # To help user understand hand position on canvas
 show_cursor_on_canvas = True 
 
@@ -457,6 +532,9 @@ last_stroke_end_time = None
 stroke_gap_threshold = 0.5   
 last_stroke_end_position = None
 
+# Determine whether to solve with A* or Quadtree A*
+use_astar = None
+
 # To store starting and ending coordiantes for maze
 maze_start = None
 maze_end = None
@@ -464,6 +542,10 @@ maze_end = None
 # To ensure that once the maze is solved, it doesn't get solved again
 maze_solved = False
 maze_path = None
+
+# Threading variables
+maze_processing_thread = None
+maze_computing = False
 
 while cap.isOpened():
     stat, frame = cap.read()
@@ -705,7 +787,7 @@ while cap.isOpened():
                 distance = disx((thumb_x, thumb_y), (index_x, index_y))    
                 
                 # Only set when distance is lesser than threshold
-                if mode == 0 and distance < 50:
+                if distance < 50:
                     current_time = time.time()
                     
                     if start_point_gesture_start_time is None:
@@ -737,22 +819,32 @@ while cap.isOpened():
                                 2)
                     
                     if elapsed_time >= startend_delay:
-                        x_index = landmark_list[8][0]
-                        y_index = landmark_list[8][1]
-                        
-                        x_thumb = landmark_list[4][0]
-                        y_thumb = landmark_list[4][1]
-                        
-                        x = (x_index + x_thumb) // 2
-                        y = (y_index + y_thumb) // 2
-                        
-                        x_adjusted = x + offset_x
-                        y_adjusted = y + offset_y
-                        
-                        maze_start = (x_adjusted, y_adjusted)
+                        if mode == 0:
+                            x_index = landmark_list[8][0]
+                            y_index = landmark_list[8][1]
+                            
+                            x_thumb = landmark_list[4][0]
+                            y_thumb = landmark_list[4][1]
+                            
+                            x = (x_index + x_thumb) // 2
+                            y = (y_index + y_thumb) // 2
+                            
+                            x_adjusted = x + offset_x
+                            y_adjusted = y + offset_y
+                            
+                            maze_start = (x_adjusted, y_adjusted)
+                        else:
+                            if use_astar is not True:
+                                maze_solved = False
+                                maze_path = None
+                            use_astar = True
+                            msg = "Solved using A-Star"
                     else:
                         cursor_x = landmark_list[8][0]
                         cursor_y = landmark_list[8][1]
+                        
+                        if mode == 1: 
+                            msg = "Hold to solve using A-Star"
             
             elif gesture_id == 6:
                 """
@@ -771,7 +863,7 @@ while cap.isOpened():
                 distance = disx((thumb_x, thumb_y), (index_x, index_y))
                 
                 # Only set when distance is lesser than threshold
-                if mode == 0 and distance < 50:
+                if distance < 50:
                     current_time = time.time()
                     
                     if end_point_gesture_start_time is None:
@@ -803,22 +895,31 @@ while cap.isOpened():
                                 2)
                     
                     if elapsed_time >= startend_delay:
-                        x_index = landmark_list[8][0]
-                        y_index = landmark_list[8][1]
-                        
-                        x_thumb = landmark_list[4][0]
-                        y_thumb = landmark_list[4][1]
-                        
-                        x = (x_index + x_thumb) // 2
-                        y = (y_index + y_thumb) // 2
-                        
-                        x_adjusted = x + offset_x
-                        y_adjusted = y + offset_y
-                        
-                        maze_end = (x_adjusted, y_adjusted)
+                        if mode == 0:
+                            x_index = landmark_list[8][0]
+                            y_index = landmark_list[8][1]
+                            
+                            x_thumb = landmark_list[4][0]
+                            y_thumb = landmark_list[4][1]
+                            
+                            x = (x_index + x_thumb) // 2
+                            y = (y_index + y_thumb) // 2
+                            
+                            x_adjusted = x + offset_x
+                            y_adjusted = y + offset_y
+                            
+                            maze_end = (x_adjusted, y_adjusted)
+                        else:
+                            if use_astar is not False:
+                                maze_solved = False
+                                maze_path = None
+                            use_astar = False
+                            msg = "Solved using Quadtree"
                     else:
                         cursor_x = landmark_list[8][0]
-                        cursor_y = landmark_list[8][1]         
+                        cursor_y = landmark_list[8][1]  
+                        if mode == 1: 
+                            msg = "Hold to solve using Quadtree"       
                     
             elif gesture_id == 0:
                 """
@@ -851,6 +952,8 @@ while cap.isOpened():
                 
                 if mode == 1:
                     msg = "Cannot change mode up"
+                elif maze_start is None or maze_end is None:
+                    msg = "Set start and end points first"
                 else:    
                     current_time = time.time()
                     msg = f"Hold to change mode to [Mode {mode+1}]"
@@ -1037,18 +1140,38 @@ while cap.isOpened():
         # Starting Coordinate   ||  maze_start
         # Ending Coordinate     ||  maze_end
         
-        if not maze_solved:
-            maze_gray = cv2.cvtColor(maze_canvas, cv2.COLOR_BGR2GRAY)
+        if not maze_solved and use_astar is not None:
+            cropped_canvas, (crop_x, crop_y) = crop_canvas_to_content(maze_canvas, maze_start, maze_end)
+            cropped_start = (maze_start[0] - crop_x, maze_start[1] - crop_y)
+            cropped_end = (maze_end[0] - crop_x, maze_end[1] - crop_y)
+            
+            maze_gray = cv2.cvtColor(cropped_canvas, cv2.COLOR_BGR2GRAY)
             _, binary_canvas = cv2.threshold(maze_gray, 10, 255, cv2.THRESH_BINARY)
             binary_maze = (binary_canvas == 0).astype(np.uint8)
             
-            obstacles = set()
-            obstacles.add(1)
-            startPos = maze_start
-            endPos = maze_end
-            (maze_path, closed) = astar(binary_maze, obstacles, startPos, endPos)
-            
-            maze_solved = True
+            # ==== For A-Star Implementation ====
+            if use_astar is True:
+                obstacles = set()
+                obstacles.add(1)
+                (cropped_path, closed) = astar(binary_maze, obstacles, cropped_start, cropped_end)
+            elif use_astar is False:
+            # ==== For Quadtree Implementation ====                
+                depth = math.ceil(math.log2(max(binary_canvas.shape[0] - 1, binary_canvas.shape[1] - 1)))
+                quadtree = build_tree(binary_canvas, cropped_start, cropped_end, depth, binary_canvas.shape[1] - 1, binary_canvas.shape[0] - 1)  
+                graph = build_graph(quadtree)
+
+                start_cord = find_containing_region(quadtree, cropped_start)
+                end_cord = find_containing_region(quadtree, cropped_end)
+
+                if start_cord is not None and end_cord is not None:
+                    cropped_path, closed = qastar(graph, start_cord, end_cord)
+                    cropped_path = [cropped_start] + cropped_path + [cropped_end]
+                
+            try:
+                maze_path = [(pt[0] + crop_x, pt[1] + crop_y) for pt in cropped_path]
+                maze_solved = True
+            except:
+                pass
         else:
             if maze_path is not None:
                 for i in range(len(maze_path) - 1):
@@ -1057,6 +1180,7 @@ while cap.isOpened():
     else:
         maze_solved = False
         maze_path = None
+        use_astar = None
     
     # Extract viewport from canvas
     try:
@@ -1089,10 +1213,42 @@ while cap.isOpened():
     cv2.putText(combined_display, title, ((width - tw) // 2, 60), cv2.FONT_HERSHEY_SIMPLEX, font_scale, red, thickness)
     
     if msg is not None:
-        if mode == 0 or (mode != 0 and (gesture_id==0 or gesture_id == 4 or gesture_id == 5)):    
+        if mode == 0 or (mode != 0 and (gesture_id==0 or gesture_id == 4 or gesture_id == 5 or gesture_id == 3 or gesture_id == 6)):    
             cv2.putText(combined_display, msg, (20, 700), cv2.FONT_HERSHEY_SIMPLEX, 0.8, black, 2)
-            PasteImg(combined_display, tools[gesture_id][1], (20, 565))
+            if mode==0: PasteImg(combined_display, tools[gesture_id][1], (20, 565))
 
+    if mode == 1:
+        # display clip_ok with transparent background with text saying "hello" below it at the middle right of the frame 
+        clip_ok = cv2.imread("toolimg/okay.png", cv2.IMREAD_UNCHANGED)
+        clip_ok = cv2.resize(clip_ok, (int(clip_ok.shape[1] * 0.3), int(clip_ok.shape[0] * 0.3)), interpolation=cv2.INTER_AREA)
+        clip_ok_height, clip_ok_width = clip_ok.shape[:2]
+        clip_ok_x = width - clip_ok_width - 20
+        clip_ok_y = height - clip_ok_height - camera_height//2 + 50
+        overlay = combined_display[clip_ok_y:clip_ok_y + clip_ok_height, clip_ok_x:clip_ok_x + clip_ok_width]
+        text = "A-Star"
+        text_x = clip_ok_x + (clip_ok_width - cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.8, 2)[0][0]) // 2
+        text_y = clip_ok_y + clip_ok_height + 30
+        cv2.putText(combined_display, text, (text_x, text_y), cv2.FONT_HERSHEY_SIMPLEX, 0.8, red, 2)
+        mask = clip_ok[:, :, 3] / 255.0
+        overlay = overlay * (1 - mask[:, :, np.newaxis]) + clip_ok[:, :, :3] * mask[:, :, np.newaxis]
+        combined_display[clip_ok_y:clip_ok_y + clip_ok_height, clip_ok_x:clip_ok_x + clip_ok_width] = overlay
+                
+        
+        clip_pinch = cv2.imread("toolimg/pinch.png", cv2.IMREAD_UNCHANGED)
+        clip_pinch = cv2.resize(clip_pinch, (int(clip_pinch.shape[1] * 0.3), int(clip_pinch.shape[0] * 0.3)), interpolation=cv2.INTER_AREA)
+        clip_pinch_height, clip_pinch_width = clip_pinch.shape[:2]
+        clip_pinch_x = 20
+        clip_pinch_y = height - clip_pinch_height - camera_height//2 + 50
+        overlay = combined_display[clip_pinch_y:clip_pinch_y + clip_pinch_height, clip_pinch_x:clip_pinch_x + clip_pinch_width]
+        text = "Quadtree"
+        text_x = clip_pinch_x + (clip_pinch_width - cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.8, 2)[0][0]) // 2
+        text_y = clip_pinch_y + clip_pinch_height + 30
+        cv2.putText(combined_display, text, (text_x, text_y), cv2.FONT_HERSHEY_SIMPLEX, 0.8, red, 2)
+        mask = clip_pinch[:, :, 3] / 255.0
+        overlay = overlay * (1 - mask[:, :, np.newaxis]) + clip_pinch[:, :, :3] * mask[:, :, np.newaxis]
+        combined_display[clip_pinch_y:clip_pinch_y + clip_pinch_height, clip_pinch_x:clip_pinch_x + clip_pinch_width] = overlay
+        
+        
     mode_text = f"Mode {mode}"
     mode_font_scale, mode_thickness = 0.8, 2
     (tw, th), _ = cv2.getTextSize(mode_text, cv2.FONT_HERSHEY_SIMPLEX, mode_font_scale, mode_thickness)
