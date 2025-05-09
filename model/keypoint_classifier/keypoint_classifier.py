@@ -17,10 +17,22 @@ class KeyPointClassifier(object):
         self.input_details = self.interpreter.get_input_details()
         self.output_details = self.interpreter.get_output_details()
 
+    # Classes : 
+    '''
+    0 - Open          :        Panning  
+    1 - Close         :        (No function)
+    2 - Pointer       :        Draw
+    3 - OK            :        Set start point 
+    4 - Thumb Up      :        Change mode up
+    5 - Thumb Down    :        Change mode down
+    6 - Alt_Ok        :        Set end point
+    7 - Yo            :        Eraser
+    '''
+
     def __call__(
         self,
         landmark_list,
-        class_thresholds={2: 0.4, 3: 0.7, 6: 0.8, 0: 0.7, 7: 0.7}  
+        class_thresholds={2: 0.4, 3: 0.5, 6: 0.8, 0: 0.7, 7: 0.7}  
     ):
         input_details_tensor_index = self.input_details[0]['index']
         self.interpreter.set_tensor(

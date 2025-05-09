@@ -1176,6 +1176,9 @@ while cap.isOpened():
             if maze_path is not None:
                 for i in range(len(maze_path) - 1):
                     cv2.line(canvas_display, maze_path[i], maze_path[i + 1], (255, 0, 0), 3)
+            else:
+                if use_astar is not None:
+                    msg = "No path found!"
     
     else:
         maze_solved = False
@@ -1218,7 +1221,6 @@ while cap.isOpened():
             if mode==0: PasteImg(combined_display, tools[gesture_id][1], (20, 565))
 
     if mode == 1:
-        # display clip_ok with transparent background with text saying "hello" below it at the middle right of the frame 
         clip_ok = cv2.imread("toolimg/okay.png", cv2.IMREAD_UNCHANGED)
         clip_ok = cv2.resize(clip_ok, (int(clip_ok.shape[1] * 0.3), int(clip_ok.shape[0] * 0.3)), interpolation=cv2.INTER_AREA)
         clip_ok_height, clip_ok_width = clip_ok.shape[:2]
@@ -1254,6 +1256,12 @@ while cap.isOpened():
     (tw, th), _ = cv2.getTextSize(mode_text, cv2.FONT_HERSHEY_SIMPLEX, mode_font_scale, mode_thickness)
     cv2.putText(combined_display, mode_text, (width - tw - 20, height - th - 10), cv2.FONT_HERSHEY_SIMPLEX, mode_font_scale, red, mode_thickness)
     
+    
+    # cv2.imshow('TraceEscape', combined_display)
+    
+    # show canvas_display in full screen 
+    cv2.namedWindow('TraceEscape', cv2.WND_PROP_FULLSCREEN)
+    cv2.setWindowProperty('TraceEscape', cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
     cv2.imshow('TraceEscape', combined_display)
     
     if cv2.waitKey(1) & 0xFF == ord('q'):
